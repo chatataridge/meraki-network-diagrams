@@ -2,7 +2,7 @@
 
 Automatically generates network topology diagrams for all networks in your Cisco Meraki organization using the official [Meraki Dashboard API](https://developer.cisco.com/meraki/api-v1/). No browser sessions or manual exports required.
 
-**One command. All networks. Two diagram formats.**
+**One command. All networks. Three diagram formats.**
 
 ```
 python main.py
@@ -18,6 +18,7 @@ For every network in your Meraki org, the tool produces:
 |---|---|
 | `diagram.mmd` | VS Code with [Mermaid Preview](https://marketplace.visualstudio.com/items?itemName=bierner.markdown-mermaid) extension |
 | `diagram.drawio` | [diagrams.net](https://app.diagrams.net) — drag, resize, export to PNG/PDF |
+| `diagram.vdx` | Microsoft Visio — open directly, all Visio editing tools available |
 
 Diagrams include:
 - **Hierarchical layout** — MX firewall at top, switches in middle, APs and endpoints below
@@ -43,6 +44,7 @@ meraki-network-diagrams/
       topology.json
       diagram.mmd
       diagram.drawio
+      diagram.vdx
     collection_summary.xlsx
   MerakiNetworkDiagram-PLAN.txt   <- Technical design reference
   meraki network diagram.txt      <- Original approach reference
@@ -103,6 +105,7 @@ All settings are in `main.py` under the configuration block. No code changes nee
 | `INCLUDE_PORT_DETAILS` | `True` | Collect port names for interface labels |
 | `GENERATE_MERMAID` | `True` | Output `.mmd` diagram files |
 | `GENERATE_DRAWIO` | `True` | Output `.drawio` diagram files |
+| `GENERATE_VISIO` | `True` | Output `.vdx` Visio files (open in Microsoft Visio) |
 | `SHOW_MODEL` | `True` | Show device model in node labels |
 | `SHOW_SERIAL` | `False` | Show serial number in node labels |
 | `SHOW_IP` | `True` | Show management IP in node labels |
@@ -127,6 +130,7 @@ Connects to the Meraki API and collects for each network:
 Reads the saved JSON files and generates:
 - Mermaid flowchart with top-down directed layout and styled root nodes
 - draw.io XML with hierarchical positioning and engineer notes text box
+- Visio XML Drawing (`.vdx`) with hierarchical layout, 2pt black box borders, 4pt blue connection lines, and per-end port labels
 
 ---
 
@@ -146,6 +150,13 @@ Reads the saved JSON files and generates:
 - Paste Mermaid code directly into a Confluence **Mermaid** macro
 - Embed draw.io files using the **draw.io** Confluence app
 
+### Visio (.vdx)
+1. Open Microsoft Visio
+2. **File → Open** → select the `diagram.vdx` file
+3. Full Visio editing — restyle shapes, add swim lanes, export to PDF/PNG
+
+> `.vdx` is the Visio XML Drawing format, supported by Visio 2010 through Visio for Microsoft 365.
+
 ---
 
 ## Troubleshooting
@@ -157,6 +168,7 @@ Reads the saved JSON files and generates:
 | `ModuleNotFoundError: meraki` | Activate the venv: `.venv-meraki\Scripts\Activate` |
 | Empty diagram for a network | Network may be wireless-only; tool falls back to LLDP/CDP |
 | draw.io file won't open | Regenerate with `python main.py` — older files may have formatting issues |
+| Visio says file is invalid | Delete old `.vdx` files and re-run `python main.py` to regenerate |
 
 ---
 
