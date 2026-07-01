@@ -1,0 +1,143 @@
+Meraki Network Diagram Generator — Plan
+========================================
+Date: 2026-06-30
+
+SUMMARY
+-------
+Two-script pipeline using the official Meraki Dashboard API v1.
+No browser cookie/cURL hack needed — uses the undiscovered
+GET /networks/{networkId}/topology/link-layer endpoint.
+Scales to 600+ networks. Config block style matches ThousandEyes scripts.
+Outputs Mermaid (.mmd) and draw.io (.drawio) diagrams with device labels,
+interface labels, and network engineer troubleshooting annotations.
+
+FILES
+-----
+  MerakiNetworkDiagram-P1.py  —  Data collection (fetch & save JSON per network)
+  MerakiNetworkDiagram-P2.py  —  Diagram generation (JSON -> Mermaid + draw.io)
+  Network Diagram/            —  Output folder (already exists)
+
+
+P1 CONFIG VARIABLES (top of script)
+-------------------------------------
+  API_KEY                 = "your_api_key_here"
+  ORG_ID                  = ""               # blank = auto-discover from /organizations
+  OUTPUT_DIR              = "Network Diagram"
+  API_DELAY_SECONDS       = 0.5              # Meraki limit = 10 req/s; 0.5s is safe
+  NETWORK_FILTER          = []               # [] = all; or ["Site-A", "HQ"] to limit scope
+  INCLUDE_SWITCH_SETTINGS = True             # STP, storm control, MTU, access policies, DHCP
+  INCLUDE_VLANS           = True             # VLAN list for MX/appliance networks
+  INCLUDE_PORT_DETAILS    = True             # Port names/descriptions for interface labels
+  BASE_URL                = "https://api.meraki.com/api/v1"
+
+
+P1 API ENDPOINTS CALLED
+------------------------
+  GET /organizations
+      - Auto-discover org ID if ORG_ID is blank
+
+  GET /organizations/{orgId}/networks
+      - Paginated (perPage=1000), loops until all networks retrieved
+
+  GET /networks/{id}/devices
+      - Device name, model, serial, firmware version, management IP
+
+  GET /networks/{id}/topology/link-layer          <-- PRIMARY topology source
+      - Returns nodes (devices) and links (connections with port IDs)
+      - Much better than the browser cookie approach
+
+  GET /devices/{serial}/lldpCdp                   <-- FALLBACK
+      - Used when link-layer returns empty (e.g. wireless-only networks)
+
+  GET /networks/{id}/switch/stp
+      - STP mode (RSTP enabled/disabled), per-port root bridge overrides
+
+  GET /networks/{id}/switch/stormControl
+      - Broadcast threshold %, multicast threshold %, unknown unicast threshold %
+
+  GET /networks/{id}/switch/mtu
+      - Default MTU size in bytes
+
+  GET /networks/{id}/switch/accessPolicies
+      - Access policy name, type (802.1X / MAC auth bypass), dot1x control direction
+      - RADIUS server configuration presence
+
+  GET /networks/{id}/switch/dhcpServerPolicy
+      - Default DHCP server policy (allow / block)
+
+  GET /networks/{id}/appliance/vlans
+      - VLAN ID, name, subnet, MX interface IP (appliance/MX networks only)
+
+  GET /devices/{serial}/switch/ports
+      - Per-port: portId, name/description, VLAN, type (access/trunk)
+      - Used to enrich interface labels in diagrams
+
+
+P1 OUTPUT PER NETWORK
+----------------------
+  Network Diagram/{network_name}/topology.json
+      Keys: networkId, networkName, productTypes, collectedAt,
+            devices, topology, lldpCdp, switchSettings, vlans, portDetails
+
+  Network Diagram/collection_summary.xlsx
+      One row per network: name, product types, device count,
+      topology found (Y/N), VLAN count, output file path
+
+
+P2 CONFIG VARIABLES (top of script)
+-------------------------------------
+  OUTPUT_DIR       = "Network Diagram"   # must match P1
+  GENERATE_MERMAID = True
+  GENERATE_DRAWIO  = True
+  SHOW_SERIAL      = True                # include serial number in node labels
+  SHOW_IP          = True                # include management IP in node labels
+  SHOW_MODEL       = True                # include model (e.g. MS225) in node labels
+  SHOW_PORT_LABELS = True                # show interface names on diagram edges
+  SHOW_PORT_DESC   = True                # append port description alongside port ID
+
+
+P2 DIAGRAM LOGIC
+-----------------
+  1. Glob all topology.json files under OUTPUT_DIR
+  2. Cross-reference topology node IDs to device details by embedded MAC/serial
+  3. Node labels: "Device Name | Model | S/N: xxx | 192.168.1.1" (per config flags)
+  4. Edge labels: "Gi1/0/1 (Uplink) <-> Port 24 (Core-SW)" (from portDetails lookup)
+  5. Root/uplink devices get distinct visual style:
+       Mermaid  -> classDef root (highlighted fill)
+       draw.io  -> blue fill (#dae8fc)
+  6. Append engineer troubleshooting notes as comments at end of each file
+
+  Engineer notes included per network:
+    - STP: mode + number of root bridge overrides
+    - Storm Control: broadcast/multicast/unknown unicast thresholds
+    - MTU: byte size
+    - Access Policies: name, type, dot1x direction
+    - DHCP Server Policy: allow/block
+    - VLANs: ID + name list (first 10, with count of remainder)
+
+
+P2 OUTPUT PER NETWORK
+----------------------
+  Network Diagram/{network_name}/diagram.mmd      <- open in VS Code Mermaid Preview
+  Network Diagram/{network_name}/diagram.drawio   <- open at diagrams.net
+
+
+VERIFICATION STEPS
+-------------------
+  1. Add API key and run P1 -> confirm topology.json files appear per network
+  2. Run P2 -> confirm .mmd and .drawio files appear
+  3. Open .mmd in VS Code (install "Markdown Preview Mermaid Support" if needed)
+  4. Open .drawio at https://app.diagrams.net to confirm visual layout and labels
+
+
+DECISIONS / NOTES
+------------------
+  - Used official API only — the browser cookie/cURL approach from the reference txt
+    expires too quickly and cannot be automated at 600-network scale.
+  - Port details only fetched for MS (switch) models to avoid wasted API calls.
+  - Rate limit: 0.5s delay per call = well under Meraki's 10 req/s limit.
+  - Switch settings (STP, storm control, etc.) only fetched for networks that
+    include "switch" in productTypes to avoid 404 errors on wireless-only networks.
+  - VLANs only fetched for networks that include "appliance" in productTypes.
+  - Topology fallback (LLDP/CDP) handles wireless-only or camera-only networks
+    that have no managed switches.

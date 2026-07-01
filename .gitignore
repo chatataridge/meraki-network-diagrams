@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv-meraki/
+.venv/
+venv/
+env/
+
+# Credentials — NEVER commit these
+.env
+
+# Generated output
+Network Diagram/
+
+# Excel outputs
+*.xlsx
+
+# OS
+.DS_Store
+Thumbs.db

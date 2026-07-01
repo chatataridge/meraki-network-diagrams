@@ -1,0 +1,66 @@
+
+
+I spent a minute looking at this and yes, the information is there and consumable. This is off of my home network and is a quick PoC. The links you see below are from my dashboard/network so you can't click them, but you can easily find/replace and do this for yours.
+
+I can't find a direct topology API endpoint for Meraki - they do publish CDP/LLDP but here's a clever hack to get data from your web browser when there isn't an API for it.
+
+Quick note: I didn't use Visio to output a drawing, instead I used Mermaid (diagrams as code… if you're not familiar, it's pretty slick).
+
+Onwards…..
+
+When you open the Topology screen in your browser, a GET is performed on this URL - open DevTools and look for this URL:
+
+https://n127.dashboard.meraki.com/Home-switch/n/isCShc_b/manage/nodes/topology?from=network-wide+topology
+
+If you look at the response tab, you'll see the data for the Topology page. If you scroll down, you can divine that the "topo" key gives you the network layout, and the "Mkijson.n.hash" gives you model, serial, etc.. (the data that you see on the diagram).
+
+Unlike an API, this URL returns HTML and the topo/mjijson keys are in the payload of the HTML. You need to use regex/BeautifulSoup (or something similar) to extract the JSON elements. But, we have the data!
+
+From there, it's pretty straightforward. To generate one drawing, I fed Claude the JSON objects and asked it to write a Python script that parses the topo and metadata. That's what created the picture above.
+
+Ok, so Len wants to do this for 600 different networks, right? That's where the API can come in and cURL is your friend!
+
+
+By looking at DevTools, I can see that the Topology page on Dashboard is generated on the local PC. It's a React component that's making these nice clickable diagrams. I know this because I can search for my firewall ('8111 Firewall') in the DevTools dump and I see it contained in JSON. If this was generated server-side, all I'd get back is an SVG. If the data is rendered on your machine, you can render it however you want.
+
+From a browser flow perspective, your browser logs in to dashboard.meraki.com and gets an authentication cookie. Specifically, there are two of them - dash_auth and _session_id_for_n127. The presence of these two cookies (which are time-sensitive, not sure exactly how long they're good for) allows your browser to pass auth and do "stuff".
+
+Any "thing" that has those cookie values can auth into your dashboard. There's a trick - we can capture the cURL request from your Chrome/Edge/Firefox browser and copy the tokens into a Python script. The request auth is contained in the headers, so you can right click on your request and choose Copy -> Copy as cURL Try it and paste the cURL command into a terminal, and boom - you'll see the raw HTML for your topology.
+
+Now, this needs to be done reasonably quickly. Meraki dashboard rotates the tokens after X amount of minutes, but there's nothing that prevents us feeding that cURL cookie information into a Python requests script.
+
+My workflow for something like this is to auth to the remote website in Chrome/Edge/whatever, copy the cURL information that shows the auth into a "curl.txt" file, un whatever I want to capture the site content to my local machine, then do a secondary script to process it into the format that I want.
+So, here you go -
+	1. Log in to Dashboard. Capture the URL(s) of the networks that you want to grab topology for (or use the API to programatically get the list) and put them in networks.txt
+	2. Copy your cURL token to the curl.txt file
+	3. Run the capture_topology.py script to download and parse the JSON for each network
+	4. Run meraki_topo_to_mermaid.py to turn them into Mermaid diagrams (or whatever else you want)
+Claude Opus 4.8 did the scripting so you should be able to easily use any LLM to change this to suit your workflow.
+
+
+curl 'https://n127.dashboard.meraki.com/Home-switch/n/isCShc_b/manage/nodes/topology?from=network-wide+topology' \
+  -H 'accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7' \
+  -H 'accept-language: en-US,en;q=0.9' \
+  -b '__cf_bm=aM2Ipr0vJ.3CS228a9xZN0zkuA5PiFVv5mvIWzSe.4Y-1782576160.6240025-1.0.1.1-vp9qhKW1XpZoc4CA9La.5GMY1N8qEfTPe0Gg8Fe2TTsDlZdhj3wRNEIun.m6i0MJUdTIWAfs3nnzZIeugKJchhTn8PxBumNjbktb4it9nijzNtQAZC4im0ngjy4AHYcB; dash_auth=MGb-pGdMbMFaV6sRGJ.0ncaWbK_036PsrBZS8xt7m185V456456456456456456456465465465rRvFXZmXNYZm1JOgI2pJG7ekAfPYtU3JPThOeVEsAGLXs2GwpQTulxIOarunBp2ByEKD1ZwDBGM7kWuNIEJpviLPWqMrQ3Rf9-hKWjuszPAEX5KcX89gzvXrxZHPi4vu0CRS3BsfpvLW5vj1T9TDIX2HQROkrPENOb3aCOfRwYarKDLC5wJwfJYWUB8_2rV4dXj8m35bzlZZlNdHXiU-saXg.bijQqkmIA5Lki5hNO4ZfuQ; _session_id_for_n127=761f7d184289783737456456456456456456; INGRESSCOOKIE="ChExMC4zOC4zNC4xNjE6NTAwMBCgwY4G"; OptanonConsent=isGpcEnabled=0&datestamp=Sat+Jun+27+2026+10%3A05%3A24+GMT-0600+(Mountain+Daylight+Time)&version=202601.1.0&browserGpcFlag=0&isIABGlobal=false&hosts=&consentId=163045a8-efc4-4dec-8c38-d1446983634f&interactionCount=1&isAnonUser=1&landingPath=NotLandingPage&groups=1%3A1%2C2%3A1%2C3%3A1%2C4%3A1&crTime=1778108549925&AwaitingReconsent=false' \
+  -H 'priority: u=0, i' \
+  -H 'referer: https://n127.dashboard.meraki.com/Home-wireless/n/y7l3-b_b/manage/usage/traffic_report?from=network-wide+traffic-analytics' \
+  -H 'sec-ch-ua: "Microsoft Edge";v="149", "Chromium";v="149", "Not)A;Brand";v="24"' \
+  -H 'sec-ch-ua-mobile: ?0' \
+  -H 'sec-ch-ua-platform: "macOS"' \
+  -H 'sec-fetch-dest: document' \
+  -H 'sec-fetch-mode: navigate' \
+  -H 'sec-fetch-site: same-origin' \
+  -H 'sec-fetch-user: ?1' \
+  -H 'upgrade-insecure-requests: 1' \
+  -H 'user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0'
+
+
+
+  # One Meraki topology URL per line. Blank lines and # comments are ignored.
+# All networks must be on the same n<NN> shard as the curl.txt you copied.
+
+https://n127.dashboard.meraki.com/Test-Lab-switch/n/JtbIla_b/manage/nodes/topology/l2_topology?from=network-wide+topology
+
+https://n127.dashboard.meraki.com/Home-switch/n/isCShc_b/manage/nodes/topology/l2_topology
+
+
