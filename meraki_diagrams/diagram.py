@@ -333,9 +333,9 @@ def build_drawio(data):
 
 def build_visio(data):
     """
-    Generates a .vsdx Visio file (as bytes) with hierarchical layout.
-    Uses only Python standard library — no extra packages required.
-    Open the output .vsdx file directly in Microsoft Visio.
+    Generates a .vdx Visio XML Drawing file (plain XML string).
+    All shapes are fully editable and independently movable in Visio.
+    Connector lines use formula-based geometry so they follow endpoint drags.
     """
     net_name   = data.get("networkName", "Network")
     topo       = data.get("topology", {})
@@ -344,11 +344,10 @@ def build_visio(data):
     device_map = build_device_map(data)
     levels     = compute_hierarchy(nodes, links)
 
-    # Layout (inches; Visio Y=0 is bottom of page, Y increases upward)
     page_w, page_h = 11.0, 8.5
-    node_w, node_h = 2.0,  0.6
+    node_w, node_h = 2.0,  0.75
     x_gap,  y_gap  = 0.5,  1.5
-    y_top          = page_h - 0.8   # top-most level sits here
+    y_top          = page_h - 0.8
 
     by_level = {}
     for nid, lvl in levels.items():
@@ -367,208 +366,225 @@ def build_visio(data):
 
     shape_ids = {node["derivedId"]: idx + 1 for idx, node in enumerate(nodes)}
 
-    def _esc(text):
+    def _x(text):
         return (
             str(text)
             .replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
+            .replace('"', "&quot;")
         )
 
-    shapes_parts   = []
-    connects_parts = []
-    connector_id   = 1000
-    label_id       = 2000
+    def _rect_geom(w, h):
+        return (
+            f'          <Geom IX="0">\n'
+            f'            <NoFill>0</NoFill>\n'
+            f'            <NoLine>0</NoLine>\n'
+            f'            <MoveTo IX="1"><X F="Width*0">0</X><Y F="Height*0">0</Y></MoveTo>\n'
+            f'            <LineTo IX="2"><X F="Width*1">{w}</X><Y F="Height*0">0</Y></LineTo>\n'
+            f'            <LineTo IX="3"><X F="Width*1">{w}</X><Y F="Height*1">{h}</Y></LineTo>\n'
+            f'            <LineTo IX="4"><X F="Width*0">0</X><Y F="Height*1">{h}</Y></LineTo>\n'
+            f'            <LineTo IX="5"><X F="Width*0">0</X><Y F="Height*0">0</Y></LineTo>\n'
+            f'          </Geom>'
+        )
 
-    # Node shapes
+    parts = []
+    parts.append('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>')
+    parts.append('<VisioDocument xmlns="urn:schemas-microsoft-com:office:visio"')
+    parts.append('               xml:space="preserve">')
+    parts.append('  <DocumentSheet NameU="TheDoc"')
+    parts.append('                 UniqueID="{00000000-0000-0000-0000-000000000001}">')
+    parts.append('    <StyleSheets>')
+    parts.append('      <StyleSheet ID="0" NameU="Normal"')
+    parts.append('                  IsCustomName="0" IsCustomNameU="0"')
+    parts.append('                  LineStyle="0" FillStyle="0" TextStyle="0">')
+    parts.append('        <Line>')
+    parts.append('          <LineWeight>0.01389</LineWeight>')
+    parts.append('          <LineColor>#000000</LineColor>')
+    parts.append('          <LinePattern>1</LinePattern>')
+    parts.append('        </Line>')
+    parts.append('        <Fill>')
+    parts.append('          <FillForegnd>#ffffff</FillForegnd>')
+    parts.append('          <FillPattern>1</FillPattern>')
+    parts.append('        </Fill>')
+    parts.append('        <Char><Size>0.1389</Size></Char>')
+    parts.append('      </StyleSheet>')
+    parts.append('    </StyleSheets>')
+    parts.append('  </DocumentSheet>')
+    parts.append('  <Masters/>')
+    parts.append('  <Pages>')
+    parts.append('    <Page ID="1" NameU="Page-1">')
+    parts.append('      <PageSheet UniqueID="{00000000-0000-0000-0000-000000000002}"')
+    parts.append('                 LineStyle="0" FillStyle="0" TextStyle="0">')
+    parts.append('        <PageProps>')
+    parts.append(f'          <PageWidth>{page_w}</PageWidth>')
+    parts.append(f'          <PageHeight>{page_h}</PageHeight>')
+    parts.append('          <PageScale>1</PageScale>')
+    parts.append('          <DrawingScale>1</DrawingScale>')
+    parts.append('        </PageProps>')
+    parts.append('      </PageSheet>')
+    parts.append('      <Shapes>')
+
+    # ── Device box shapes ──
     for node in nodes:
         did    = node["derivedId"]
         sid    = shape_ids[did]
-        label  = _esc(get_node_label(did, device_map, separator="&#xa;"))
-        cx, cy = positions.get(did, (5.5, 4.25))
+        label  = _x(get_node_label(did, device_map, separator="\n"))
+        cx, cy = positions.get(did, (page_w / 2, page_h / 2))
         is_root = node.get("root", False)
-        fill   = "#dae8fc" if is_root else "#ffffff"
-        stroke = "#6c8ebf" if is_root else "#000000"
+        fill   = "#dae8fc" if is_root else "#e2f0d9"
+        stroke = "#6c8ebf" if is_root else "#548235"
         bold   = "1"       if is_root else "0"
-        shapes_parts.append(
-            f'    <Shape ID="{sid}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">\n'
-            f'      <XForm>\n'
-            f'        <PinX>{cx:.4f}</PinX>\n'
-            f'        <PinY>{cy:.4f}</PinY>\n'
-            f'        <Width>{node_w}</Width>\n'
-            f'        <Height>{node_h}</Height>\n'
-            f'        <LocPinX F="Width*0.5">{node_w / 2}</LocPinX>\n'
-            f'        <LocPinY F="Height*0.5">{node_h / 2}</LocPinY>\n'
-            f'      </XForm>\n'
-            f'      <Fill><FillForegnd>{fill}</FillForegnd><FillBkgnd>#ffffff</FillBkgnd></Fill>\n'
-            f'      <Line><LineColor>{stroke}</LineColor><LineWeight>0.01389</LineWeight></Line>\n'
-            f'      <Char><Style>{bold}</Style><Size>0.1389</Size></Char>\n'
-            f'      <Text>{label}</Text>\n'
-            f'    </Shape>'
-        )
+        parts.append(f'        <Shape ID="{sid}" LineStyle="0" FillStyle="0" TextStyle="0">')
+        parts.append( '          <XForm>')
+        parts.append(f'            <PinX>{cx:.4f}</PinX>')
+        parts.append(f'            <PinY>{cy:.4f}</PinY>')
+        parts.append(f'            <Width>{node_w}</Width>')
+        parts.append(f'            <Height>{node_h}</Height>')
+        parts.append(f'            <LocPinX F="Width*0.5">{node_w / 2:.4f}</LocPinX>')
+        parts.append(f'            <LocPinY F="Height*0.5">{node_h / 2:.4f}</LocPinY>')
+        parts.append( '            <Angle>0</Angle>')
+        parts.append( '            <FlipX>0</FlipX>')
+        parts.append( '            <FlipY>0</FlipY>')
+        parts.append( '            <ResizeMode>0</ResizeMode>')
+        parts.append( '          </XForm>')
+        parts.append( '          <Fill>')
+        parts.append(f'            <FillForegnd>{fill}</FillForegnd>')
+        parts.append( '            <FillBkgnd>#ffffff</FillBkgnd>')
+        parts.append( '            <FillPattern>1</FillPattern>')
+        parts.append( '          </Fill>')
+        parts.append( '          <Line>')
+        parts.append(f'            <LineColor>{stroke}</LineColor>')
+        parts.append( '            <LineWeight>0.02778</LineWeight>')
+        parts.append( '            <LinePattern>1</LinePattern>')
+        parts.append( '          </Line>')
+        parts.append( '          <Char>')
+        parts.append(f'            <Style>{bold}</Style>')
+        parts.append( '            <Size>0.1389</Size>')
+        parts.append( '          </Char>')
+        parts.append(          _rect_geom(node_w, node_h))
+        parts.append(f'          <Text>{label}</Text>')
+        parts.append( '        </Shape>')
 
-    # Connector + per-end port label shapes
-    for lidx, link in enumerate(links):
+    # ── Connector lines ──
+    # Uses formula-driven XForm so Width/Height auto-update from XForm1D.
+    # Geom references Width/Height via formulas so the visible line follows drags.
+    # No <Connect> glue — all shapes are independent.
+    connector_id = 1000
+    label_id     = 2000
+
+    for link in links:
         ends = link.get("ends", [])
         if len(ends) != 2:
             continue
         a_did = ends[0]["node"]["derivedId"]
         b_did = ends[1]["node"]["derivedId"]
-        a_sid = shape_ids.get(a_did)
-        b_sid = shape_ids.get(b_did)
-        if not a_sid or not b_sid:
+        if a_did not in shape_ids or b_did not in shape_ids:
             continue
 
-        a_cx, a_cy = positions.get(a_did, (5.5, 4.25))
-        b_cx, b_cy = positions.get(b_did, (5.5, 2.75))
+        a_cx, a_cy = positions.get(a_did, (page_w / 2, page_h / 2))
+        b_cx, b_cy = positions.get(b_did, (page_w / 2, page_h / 2 - y_gap))
 
-        # Connector: source center-bottom -> target center-top
         bx = a_cx;  by = a_cy - node_h / 2
         ex = b_cx;  ey = b_cy + node_h / 2
 
-        shapes_parts.append(
-            f'    <Shape ID="{connector_id}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">\n'
-            f'      <XForm1D>\n'
-            f'        <BeginX>{bx:.4f}</BeginX>\n'
-            f'        <BeginY>{by:.4f}</BeginY>\n'
-            f'        <EndX>{ex:.4f}</EndX>\n'
-            f'        <EndY>{ey:.4f}</EndY>\n'
-            f'      </XForm1D>\n'
-            f'      <Line><LineWeight>0.01389</LineWeight><EndArrow>4</EndArrow></Line>\n'
-            f'    </Shape>'
-        )
-        connects_parts.append(
-            f'  <Connect FromSheet="{connector_id}" FromCell="BeginX" ToSheet="{a_sid}" ToCell="PinX"/>'
-        )
-        connects_parts.append(
-            f'  <Connect FromSheet="{connector_id}" FromCell="EndX"   ToSheet="{b_sid}" ToCell="PinX"/>'
-        )
-        connector_id += 1
+        # XForm is derived from XForm1D using standard Visio formulas
+        # These formulas make Width/Height recalculate when endpoints move
+        pin_x = (bx + ex) / 2
+        pin_y = (by + ey) / 2
+        w_val = abs(ex - bx) if abs(ex - bx) > 0.001 else 0.01
+        h_val = abs(by - ey) if abs(by - ey) > 0.001 else 0.01
 
-        # Port label near source (just below source shape)
+        parts.append(f'        <Shape ID="{connector_id}" LineStyle="0" FillStyle="0" TextStyle="0">')
+        parts.append( '          <XForm1D>')
+        parts.append(f'            <BeginX>{bx:.4f}</BeginX>')
+        parts.append(f'            <BeginY>{by:.4f}</BeginY>')
+        parts.append(f'            <EndX>{ex:.4f}</EndX>')
+        parts.append(f'            <EndY>{ey:.4f}</EndY>')
+        parts.append( '          </XForm1D>')
+        # XForm with formulas that derive from XForm1D endpoints
+        parts.append( '          <XForm>')
+        parts.append(f'            <PinX F="GUARD((BeginX+EndX)/2)">{pin_x:.4f}</PinX>')
+        parts.append(f'            <PinY F="GUARD((BeginY+EndY)/2)">{pin_y:.4f}</PinY>')
+        parts.append(f'            <Width F="GUARD(EndX-BeginX)">{w_val:.4f}</Width>')
+        parts.append(f'            <Height F="GUARD(EndY-BeginY)">{h_val:.4f}</Height>')
+        parts.append(f'            <LocPinX F="GUARD(Width*0.5)">{w_val / 2:.4f}</LocPinX>')
+        parts.append(f'            <LocPinY F="GUARD(Height*0.5)">{h_val / 2:.4f}</LocPinY>')
+        parts.append( '            <Angle>0</Angle>')
+        parts.append( '          </XForm>')
+        parts.append( '          <Line>')
+        parts.append( '            <LineColor>#0070C0</LineColor>')
+        parts.append( '            <LineWeight>0.02778</LineWeight>')
+        parts.append( '            <LinePattern>1</LinePattern>')
+        parts.append( '          </Line>')
+        # Geom with formula-driven coordinates — line always goes from (0,0) to (Width,Height)
+        # This makes the visible line follow whenever endpoints are dragged
+        parts.append( '          <Geom IX="0">')
+        parts.append( '            <NoFill>1</NoFill>')
+        parts.append( '            <NoLine>0</NoLine>')
+        parts.append( '            <MoveTo IX="1"><X F="Width*0">0</X><Y F="Height*0">0</Y></MoveTo>')
+        parts.append(f'            <LineTo IX="2"><X F="Width*1">{w_val:.4f}</X><Y F="Height*1">{h_val:.4f}</Y></LineTo>')
+        parts.append( '          </Geom>')
+        parts.append( '        </Shape>')
+
+        # Port label shapes — separate text boxes near each end
         a_port = get_port_label(ends[0])
         if a_port:
-            lx = bx + 0.15;  ly = by - 0.20
-            shapes_parts.append(
-                f'    <Shape ID="{label_id}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">\n'
-                f'      <XForm>\n'
-                f'        <PinX>{lx:.4f}</PinX><PinY>{ly:.4f}</PinY>\n'
-                f'        <Width>1.2</Width><Height>0.22</Height>\n'
-                f'        <LocPinX F="Width*0.5">0.6</LocPinX><LocPinY F="Height*0.5">0.11</LocPinY>\n'
-                f'      </XForm>\n'
-                f'      <Fill><FillPattern>0</FillPattern></Fill>\n'
-                f'      <Line><LinePattern>0</LinePattern></Line>\n'
-                f'      <Char><Size>0.0972</Size></Char>\n'
-                f'      <Text>{_esc(a_port)}</Text>\n'
-                f'    </Shape>'
-            )
+            lx = bx + 0.15;  ly = by - 0.22
+            parts.append(f'        <Shape ID="{label_id}" LineStyle="0" FillStyle="0" TextStyle="0">')
+            parts.append( '          <XForm>')
+            parts.append(f'            <PinX>{lx:.4f}</PinX>')
+            parts.append(f'            <PinY>{ly:.4f}</PinY>')
+            parts.append( '            <Width>1.2</Width>')
+            parts.append( '            <Height>0.25</Height>')
+            parts.append( '            <LocPinX F="Width*0.5">0.6</LocPinX>')
+            parts.append( '            <LocPinY F="Height*0.5">0.125</LocPinY>')
+            parts.append( '            <Angle>0</Angle>')
+            parts.append( '            <FlipX>0</FlipX>')
+            parts.append( '            <FlipY>0</FlipY>')
+            parts.append( '            <ResizeMode>0</ResizeMode>')
+            parts.append( '          </XForm>')
+            parts.append( '          <Fill><FillPattern>0</FillPattern></Fill>')
+            parts.append( '          <Line><LinePattern>0</LinePattern></Line>')
+            parts.append( '          <Char><Size>0.0972</Size></Char>')
+            parts.append(          _rect_geom(1.2, 0.25))
+            parts.append(f'          <Text>{_x(a_port)}</Text>')
+            parts.append( '        </Shape>')
             label_id += 1
 
-        # Port label near target (just above target shape)
         b_port = get_port_label(ends[1])
         if b_port:
-            lx = ex + 0.15;  ly = ey + 0.20
-            shapes_parts.append(
-                f'    <Shape ID="{label_id}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">\n'
-                f'      <XForm>\n'
-                f'        <PinX>{lx:.4f}</PinX><PinY>{ly:.4f}</PinY>\n'
-                f'        <Width>1.2</Width><Height>0.22</Height>\n'
-                f'        <LocPinX F="Width*0.5">0.6</LocPinX><LocPinY F="Height*0.5">0.11</LocPinY>\n'
-                f'      </XForm>\n'
-                f'      <Fill><FillPattern>0</FillPattern></Fill>\n'
-                f'      <Line><LinePattern>0</LinePattern></Line>\n'
-                f'      <Char><Size>0.0972</Size></Char>\n'
-                f'      <Text>{_esc(b_port)}</Text>\n'
-                f'    </Shape>'
-            )
+            lx = ex + 0.15;  ly = ey + 0.22
+            parts.append(f'        <Shape ID="{label_id}" LineStyle="0" FillStyle="0" TextStyle="0">')
+            parts.append( '          <XForm>')
+            parts.append(f'            <PinX>{lx:.4f}</PinX>')
+            parts.append(f'            <PinY>{ly:.4f}</PinY>')
+            parts.append( '            <Width>1.2</Width>')
+            parts.append( '            <Height>0.25</Height>')
+            parts.append( '            <LocPinX F="Width*0.5">0.6</LocPinX>')
+            parts.append( '            <LocPinY F="Height*0.5">0.125</LocPinY>')
+            parts.append( '            <Angle>0</Angle>')
+            parts.append( '            <FlipX>0</FlipX>')
+            parts.append( '            <FlipY>0</FlipY>')
+            parts.append( '            <ResizeMode>0</ResizeMode>')
+            parts.append( '          </XForm>')
+            parts.append( '          <Fill><FillPattern>0</FillPattern></Fill>')
+            parts.append( '          <Line><LinePattern>0</LinePattern></Line>')
+            parts.append( '          <Char><Size>0.0972</Size></Char>')
+            parts.append(          _rect_geom(1.2, 0.25))
+            parts.append(f'          <Text>{_x(b_port)}</Text>')
+            parts.append( '        </Shape>')
             label_id += 1
 
-    shapes_xml   = "\n".join(shapes_parts)
-    connects_xml = "\n".join(connects_parts)
+        connector_id += 1
 
-    # ---- Build .vsdx XML parts ----
-    content_types_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n'
-        '  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n'
-        '  <Default Extension="xml" ContentType="application/xml"/>\n'
-        '  <Override PartName="/visio/document.xml" ContentType="application/vnd.ms-visio.drawing.main+xml"/>\n'
-        '  <Override PartName="/visio/pages/pages.xml" ContentType="application/vnd.ms-visio.pages+xml"/>\n'
-        '  <Override PartName="/visio/pages/page1.xml" ContentType="application/vnd.ms-visio.page+xml"/>\n'
-        '</Types>'
-    )
-    rels_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
-        '  <Relationship Id="rId1" '
-        'Type="http://schemas.microsoft.com/visio/2010/relationships/document" '
-        'Target="visio/document.xml"/>\n'
-        '</Relationships>'
-    )
-    document_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        '<VisioDocument xmlns="http://schemas.microsoft.com/office/visio/2012/main"\n'
-        '               xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">\n'
-        '  <DocumentSheet UniqueID="{00000000-0000-0000-0000-000000000001}">\n'
-        '    <StyleSheets>\n'
-        '      <StyleSheet ID="0" NameU="Normal" IsCustomName="0" IsCustomNameU="0"\n'
-        '                  LineStyle="0" FillStyle="0" TextStyle="0">\n'
-        '        <Line><LineWeight>0.01389</LineWeight><LineColor>#000000</LineColor><LinePattern>1</LinePattern></Line>\n'
-        '        <Fill><FillForegnd>#ffffff</FillForegnd><FillPattern>1</FillPattern></Fill>\n'
-        '        <Char><Size>0.1389</Size></Char>\n'
-        '      </StyleSheet>\n'
-        '    </StyleSheets>\n'
-        '  </DocumentSheet>\n'
-        '  <Pages r:id="rId1"/>\n'
-        '</VisioDocument>'
-    )
-    document_rels_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
-        '  <Relationship Id="rId1" '
-        'Type="http://schemas.microsoft.com/visio/2010/relationships/pages" '
-        'Target="pages/pages.xml"/>\n'
-        '</Relationships>'
-    )
-    pages_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        '<Pages xmlns="http://schemas.microsoft.com/office/visio/2012/main"\n'
-        '       xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">\n'
-        '  <Page ID="1" NameU="Page-1" Name="Page-1" r:id="rId1"/>\n'
-        '</Pages>'
-    )
-    pages_rels_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
-        '  <Relationship Id="rId1" '
-        'Type="http://schemas.microsoft.com/visio/2010/relationships/page" '
-        'Target="page1.xml"/>\n'
-        '</Relationships>'
-    )
-    page1_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        '<PageContents xmlns="http://schemas.microsoft.com/office/visio/2012/main"\n'
-        '              xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"\n'
-        '              xml:space="preserve">\n'
-        '  <Shapes>\n'
-        f'{shapes_xml}\n'
-        '  </Shapes>\n'
-        '  <Connects>\n'
-        f'{connects_xml}\n'
-        '  </Connects>\n'
-        '</PageContents>'
-    )
+    parts.append('      </Shapes>')
+    # No <Connects> — all shapes are independent and freely movable
+    parts.append('    </Page>')
+    parts.append('  </Pages>')
+    parts.append('</VisioDocument>')
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("[Content_Types].xml",               content_types_xml)
-        zf.writestr("_rels/.rels",                        rels_xml)
-        zf.writestr("visio/document.xml",                 document_xml)
-        zf.writestr("visio/_rels/document.xml.rels",      document_rels_xml)
-        zf.writestr("visio/pages/pages.xml",              pages_xml)
-        zf.writestr("visio/pages/_rels/pages.xml.rels",   pages_rels_xml)
-        zf.writestr("visio/pages/page1.xml",              page1_xml)
-    return buf.getvalue()
+    return "\n".join(parts)
 
 
 def add_notes_to_drawio(drawio_str, notes):
@@ -658,10 +674,10 @@ def save_diagrams(network_name, mermaid_str, drawio_str, data, notes, output_dir
         print(f"  draw.io  --> {drawio_path}")
 
     if GENERATE_VISIO:
-        visio_bytes = build_visio(data)
-        visio_path  = os.path.join(folder, "diagram.vsdx")
-        with open(visio_path, "wb") as f:
-            f.write(visio_bytes)
+        visio_str  = build_visio(data)
+        visio_path = os.path.join(folder, "diagram.vdx")
+        with open(visio_path, "w", encoding="utf-8") as f:
+            f.write(visio_str)
         print(f"  Visio    --> {visio_path}")
 
 
